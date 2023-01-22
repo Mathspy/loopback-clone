@@ -36,22 +36,17 @@ fn main() -> anyhow::Result<()> {
     println!("Using output device: \"{}\"", output_device.name()?);
 
     // We'll try and use the same configuration between streams to keep it simple.
-    let config: cpal::StreamConfig = input_device.default_input_config()?.into();
-
-    // Create a delay in case the input and output devices aren't synced.
-    let latency_frames = (150.0 / 1_000.0) * config.sample_rate.0 as f32;
-    let latency_samples = latency_frames as usize * config.channels as usize;
+    let config: cpal::StreamConfig = microphone.default_input_config()?.into();
 
     // The buffer to share samples
-    let ring = HeapRb::<f32>::new(latency_samples * 2);
+    let ring = HeapRb::<f32>::new(
+        config
+            .sample_rate
+            .0
+            .try_into()
+            .expect("couldn't convert u32 to usize"),
+    );
     let (mut producer, mut consumer) = ring.split();
-
-    // Fill the samples with 0.0 equal to the length of the delay.
-    for _ in 0..latency_samples {
-        // The ring buffer has twice as much space as necessary to add latency here,
-        // so this should never fail
-        producer.push(0.0).unwrap();
-    }
 
     let input_data_fn = move |data: &[f32], _: &cpal::InputCallbackInfo| {
         let mut output_fell_behind = false;
@@ -86,15 +81,12 @@ fn main() -> anyhow::Result<()> {
         "Attempting to build both streams with f32 samples and `{:?}`.",
         config
     );
-    let input_stream = input_device.build_input_stream(&config, input_data_fn, err_fn)?;
+    let input_stream = microphone.build_input_stream(&config, input_data_fn, err_fn)?;
     let output_stream = output_device.build_output_stream(&config, output_data_fn, err_fn)?;
     println!("Successfully built streams.");
 
     // Play the streams.
-    println!(
-        "Starting the input and output streams with `{}` milliseconds of latency.",
-        150.0
-    );
+    println!("Starting the input and output streams",);
     input_stream.play()?;
     output_stream.play()?;
 
