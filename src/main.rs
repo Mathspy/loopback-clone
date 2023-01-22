@@ -6,19 +6,23 @@
 //! Uses a delay of `LATENCY_MS` milliseconds in case the default input and output streams are not
 //! precisely synchronised.
 
-use std::sync::mpsc::SyncSender;
-
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use ringbuf::{
+    ring_buffer::{RbRef, RbWrite},
+    HeapRb, Producer,
+};
 
-fn create_input_processing_fn(
-    producer: SyncSender<f32>,
-) -> impl Fn(&[f32], &cpal::InputCallbackInfo) {
+fn create_input_processing_fn<R>(
+    mut producer: Producer<f32, R>,
+) -> impl FnMut(&[f32], &cpal::InputCallbackInfo)
+where
+    R: RbRef,
+    <R as RbRef>::Rb: RbWrite<f32>,
+{
     move |data: &[f32], _: &cpal::InputCallbackInfo| {
         let mut output_fell_behind = false;
-        for &sample in data {
-            if producer.try_send(sample).is_err() {
-                output_fell_behind = true;
-            }
+        if producer.push_slice(data) != data.len() {
+            output_fell_behind = true;
         }
         if output_fell_behind {
             eprintln!("output stream fell behind: try increasing latency");
@@ -66,20 +70,28 @@ fn main() -> anyhow::Result<()> {
     let config: cpal::StreamConfig = microphone.default_input_config()?.into();
 
     // The buffer to share samples
-    let (producer_mic, consumer_mic) = std::sync::mpsc::sync_channel::<f32>(10_240);
-    let (producer_capture, consumer_capture) = std::sync::mpsc::sync_channel::<f32>(10_240);
+    let (producer_mic, mut consumer_mic) = HeapRb::<f32>::new(10_240).split();
+    let (producer_capture, mut consumer_capture) = HeapRb::<f32>::new(10_240).split();
 
     let output_data_fn = move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
         let mut input_fell_behind = false;
-        for sample in data {
-            *sample = match (consumer_mic.try_recv(), consumer_capture.try_recv()) {
-                (Ok(s1), Ok(s2)) => s1 + s2,
-                _ => {
-                    input_fell_behind = true;
-                    0.0
-                }
-            };
+        if consumer_mic.len() < data.len() || consumer_capture.len() < data.len() {
+            input_fell_behind = true;
         }
+        consumer_mic
+            .pop_iter()
+            .map(Some)
+            .chain(std::iter::repeat(None))
+            .zip(
+                consumer_capture
+                    .pop_iter()
+                    .map(Some)
+                    .chain(std::iter::repeat(None)),
+            )
+            .zip(data)
+            .for_each(|((mic_sample, capture_sample), sample)| {
+                *sample = mic_sample.unwrap_or(0.0) + capture_sample.unwrap_or(0.0)
+            });
         if input_fell_behind {
             eprintln!("input stream fell behind: try increasing latency");
         }
