@@ -98,13 +98,9 @@ fn main() -> anyhow::Result<()> {
     input_stream.play()?;
     output_stream.play()?;
 
-    // Run for 3 seconds before closing.
-    println!("Playing for 3 seconds... ");
-    std::thread::sleep(std::time::Duration::from_secs(3));
-    drop(input_stream);
-    drop(output_stream);
-    println!("Done!");
-    Ok(())
+    loop {
+        std::thread::park();
+    }
 }
 
 fn err_fn(err: cpal::StreamError) {
