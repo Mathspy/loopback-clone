@@ -14,11 +14,23 @@ fn main() -> anyhow::Result<()> {
 
     // Find devices.
     let input_device = host
-        .default_input_device()
-        .expect("default input device exists");
+        .input_devices()?
+        .find(|device| {
+            device
+                .name()
+                .map(|name| name == "MacBook Pro Microphone")
+                .unwrap_or(false)
+        })
+        .expect("microphone input device exists");
     let output_device = host
-        .default_output_device()
-        .expect("default output device exists");
+        .output_devices()?
+        .find(|device| {
+            device
+                .name()
+                .map(|name| name == "BlackHole 16ch")
+                .unwrap_or(false)
+        })
+        .expect("blackhole output device exists");
 
     println!("Using input device: \"{}\"", input_device.name()?);
     println!("Using output device: \"{}\"", output_device.name()?);
